@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .timestep_embedding import SinusoidalPositionEmbeddings
+from .timestep_embedding import TimestepEmbedding
 from .blocks import ResidualBlock, AttentionBlock, Downsample, Upsample
 
 
@@ -26,7 +26,7 @@ class UNet(nn.Module):
         self.num_res_blocks = num_res_blocks
         self.num_resolutions = len(channel_multiplier)
 
-        self.time_embed = SinusoidalPositionEmbeddings(time_embed_dim)
+        self.time_embed = TimestepEmbedding(time_embed_dim, time_embed_dim)
         self.input_conv = nn.Conv2d(in_channels, base_channels, 3, padding=1)
 
         self.encoder_blocks = nn.ModuleList()

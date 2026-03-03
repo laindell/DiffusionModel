@@ -13,7 +13,6 @@ import os
 import sys
 import argparse
 import torch
-import torch.nn as nn
 from tqdm import tqdm
 
 # Додаємо шлях до модулів
@@ -22,8 +21,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import config as cfg
 from model.unet import UNet
 from diffusion.noise_scheduler import create_noise_scheduler
-from utils.checkpoint import load_model
-from utils.visualization import save_samples, denormalize
+from utils.visualization import save_samples
 
 
 def parse_args():
@@ -56,10 +54,8 @@ def parse_args():
                        help='Параметр стохастичності (0 = детермінований)')
     
     # Візуалізація
-    parser.add_argument('--show_steps', action='store_true',
-                       help='Зберігати проміжні кроки')
-    parser.add_argument('--save_gif', action='store_true',
-                       help='Створити GIF анімацію процесу')
+    parser.add_argument('--show_steps', action='store_true', help='Зберігати проміжні кроки')
+    parser.add_argument('--save_gif', action='store_true', help='Створити GIF анімацію процесу')
     
     return parser.parse_args()
 
@@ -76,6 +72,8 @@ def step_ddim(noise_scheduler, model_output, t, sample, eta):
     pred_original_sample = (
         sample - torch.sqrt(1 - alpha_bar) * model_output
     ) / torch.sqrt(alpha_bar)
+    
+    pred_original_sample = torch.clamp(pred_original_sample, -1.0, 1.0)
     
     pred_sample_direction = torch.sqrt(1 - alpha_bar_prev - eta * beta) * model_output
     prev_sample = torch.sqrt(alpha_bar_prev) * pred_original_sample + pred_sample_direction
@@ -99,7 +97,9 @@ def step_ddpm(noise_scheduler, model_output, t, sample, eta):
     
     pred_original_sample = (
         sample - torch.sqrt(1 - alpha_bar_t) * model_output
-    ) / torch.sqrt(alpha_bar_t)
+    ) / torch.sqrt(alpha_bar_t)\
+    
+    pred_original_sample = torch.clamp(pred_original_sample, -1.0, 1.0)
     
     pred_variance = (1 - alpha_bar_t_prev) / (1 - alpha_bar_t) * beta_t
     pred_variance = torch.sqrt(max(pred_variance, 0))

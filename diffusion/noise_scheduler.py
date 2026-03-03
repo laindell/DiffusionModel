@@ -17,10 +17,8 @@ x_t = sqrt(alpha_hat_t) * x_0 + sqrt(1 - alpha_hat_t) * epsilon
 - epsilon: випадковий гаусівський шум
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
 
 
 class NoiseScheduler(nn.Module):
@@ -184,8 +182,7 @@ class NoiseScheduler(nn.Module):
         Виконує один крок зворотного процесу (DDPM sampler).
         
         Це рівняння зворотного процесу:
-        x_{t-1} = (x_t - (1-alpha_bar_t)/sqrt(1-alpha_bar_t) * pred_noise) / sqrt(alpha_t)
-                 + sigma_t * z
+        x_{t-1} = (x_t - (1-alpha_bar_t)/sqrt(1-alpha_bar_t) * pred_noise) / sqrt(alpha_t) + sigma_t * z
         
         де sigma_t = sqrt(beta_t * (1-alpha_bar_{t-1}) / (1-alpha_bar_t))
         
@@ -213,6 +210,8 @@ class NoiseScheduler(nn.Module):
         pred_original_sample = (
             sample - sqrt_one_minus_alpha_bar_t * model_output
         ) / torch.sqrt(alpha_bar_t)
+        
+        pred_original_sample = torch.clamp(pred_original_sample, -1.0, 1.0)
         
         # Обчислюємо коефіцієнт для sigma
         # variance = beta_t * (1 - alpha_bar_{t-1}) / (1 - alpha_bar_t)

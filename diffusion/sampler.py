@@ -21,8 +21,7 @@ p(x_{t-1} | x_t) = N(x_{t-1}; mu(x_t, t), sigma_t^2 * I)
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Optional, Callable, List
+from typing import Optional
 from tqdm import tqdm
 from .noise_scheduler import NoiseScheduler
 
@@ -139,6 +138,8 @@ class DDIMSampler:
         pred_original_sample = (
             sample - torch.sqrt(1 - alpha_bar) * model_output
         ) / torch.sqrt(alpha_bar)
+        
+        pred_original_sample = torch.clamp(pred_original_sample, -1.0, 1.0)
         
         # Обчислюємо напрямок до попереднього
         pred_sample_direction = torch.sqrt(1 - alpha_bar_prev - eta * beta) * model_output

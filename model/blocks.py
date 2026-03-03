@@ -8,7 +8,6 @@
 - Normalization та activation шари
 """
 
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,8 +29,7 @@ class ResidualBlock(nn.Module):
         dropout (float): Ймовірність dropout
     """
     
-    def __init__(self, in_channels: int, out_channels: int, 
-                 time_embed_dim: int, dropout: float = 0.0):
+    def __init__(self, in_channels: int, out_channels: int, time_embed_dim: int, dropout: float = 0.0):
         super().__init__()
         
         # Перший конволюційний блок з нормалізацією
