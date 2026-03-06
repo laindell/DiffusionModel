@@ -135,8 +135,8 @@ class NoiseScheduler(nn.Module):
             Tensor з відповідними значеннями
         """
         # Конвертуємо в Python ints для індексації
-        t = t.long()
-        return tensor[t].to(t.device)
+        t_cpu = t.cpu().long()
+        return tensor[t_cpu].to(t.device)
     
     def add_noise(
         self,

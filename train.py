@@ -21,7 +21,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 
 # Додаємо шлях до модулів
@@ -117,7 +117,7 @@ def train_step(
     
     # Передбачаємо шум
     if scaler is not None:
-        with autocast():
+        with autocast(device_type='cuda'):
             noise_pred = model(noisy_images, t)
             loss = F.mse_loss(noise_pred, noise)
         
@@ -260,7 +260,7 @@ def main():
     # Gradient scaler для mixed precision
     scaler = None
     if cfg.USE_MIXED_PRECISION and device == 'cuda':
-        scaler = GradScaler()
+        scaler = GradScaler('cuda')
     
     # Checkpoint manager
     checkpoint_manager = CheckpointManager(cfg.CHECKPOINT_DIR)
