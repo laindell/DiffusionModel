@@ -127,38 +127,29 @@ class AttentionBlock(nn.Module):
             x: Вхідний тензор (batch, channels, height, width)
             
         Returns:
-            Тензор після застосування attention
+            Вихідний тензор з доданою увагою
         """
+        
         batch, channels, height, width = x.shape
         
-        # Нормалізація
         x_norm = self.norm(x)
-        
-        # Перетворюємо у форму для attention: (batch, channels, seq_len)
         x_flat = x_norm.reshape(batch, channels, height * width)
         
-        # Обчислюємо Q, K, V
         qkv = self.qkv(x_flat)
         q, k, v = qkv.split(self.channels, dim=1)
         
-        # Reshape для multi-head attention
-        q = q.reshape(batch, self.num_heads, self.head_dim, height * width)
-        k = k.reshape(batch, self.num_heads, self.head_dim, height * width)
-        v = v.reshape(batch, self.num_heads, self.head_dim, height * width)
+        # Змінюємо форму і транспонуємо для F.scaled_dot_product_attention
+        q = q.reshape(batch, self.num_heads, self.head_dim, height * width).transpose(-2, -1)
+        k = k.reshape(batch, self.num_heads, self.head_dim, height * width).transpose(-2, -1)
+        v = v.reshape(batch, self.num_heads, self.head_dim, height * width).transpose(-2, -1)
         
-        # Обчислюємо attention scores
-        scale = self.head_dim ** -0.5
-        attn = torch.einsum('bhdn,bhdm->bhnm', q, k) * scale
-        attn = F.softmax(attn, dim=-1)
+        # Використовуємо вбудований оптимізований Flash Attention
+        out = F.scaled_dot_product_attention(q, k, v)
         
-        # Застосовуємо attention до values
-        out = torch.einsum('bhnm,bhdm->bhdn', attn, v)
-        out = out.reshape(batch, channels, height * width)
+        # Повертаємо початкову форму
+        out = out.transpose(-2, -1).reshape(batch, channels, height * width)
         
-        # Вихідна проєкція
         out = self.proj(out)
-        
-        # Додаємо до оригіналу (residual connection)
         out = out.reshape(batch, channels, height, width)
         return x + out
 

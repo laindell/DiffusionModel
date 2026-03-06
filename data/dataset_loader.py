@@ -211,7 +211,8 @@ def load_dataset(
         shuffle=is_training,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True
+        drop_last=True,
+        persistent_workers=(num_workers > 0)
     )
     
     return dataloader, num_channels

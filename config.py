@@ -91,8 +91,17 @@ NUM_WORKERS = 4
 # Використовувати GPU якщо доступно
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-# Змішування точок (mixed precision) для швидшого навчання
-USE_MIXED_PRECISION = True
+# Автоматичний вибір Mixed Precision залежно від покоління відеокарти
+if DEVICE == 'cuda' and torch.cuda.is_bf16_supported():
+    # Для RTX 30xx, 40xx і новіших
+    USE_MIXED_PRECISION = True
+    AUTOCAST_DTYPE = torch.bfloat16
+    print("-> Відеокарта підтримує bfloat16: Mixed Precision УВІМКНЕНО")
+else:
+    # Для RTX 20xx, GTX 10xx, 16xx (або якщо використовується CPU)
+    USE_MIXED_PRECISION = False
+    AUTOCAST_DTYPE = torch.float32
+    print("-> Відеокарта НЕ підтримує bfloat16: Mixed Precision ВИМКНЕНО (використовується float32 для стабільності)")
 
 # Крок градієнту (gradient clipping)
 GRADIENT_CLIP = 1.0
@@ -141,6 +150,7 @@ def get_config():
         'num_workers': NUM_WORKERS,
         'device': DEVICE,
         'use_mixed_precision': USE_MIXED_PRECISION,
+        'autocast_dtype': str(AUTOCAST_DTYPE),
         'gradient_clip': GRADIENT_CLIP,
         'output_dir': OUTPUT_DIR,
         'checkpoint_dir': CHECKPOINT_DIR,

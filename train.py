@@ -30,19 +30,19 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Імпортуємо модулі проєкту
 import config as cfg
 from model.unet import UNet
-from model.timestep_embedding import SinusoidalPositionEmbeddings
 from diffusion.noise_scheduler import create_noise_scheduler
 from diffusion.forward_diffusion import ForwardDiffusion
 from data.dataset_loader import load_dataset
 from utils.checkpoint import CheckpointManager
 from utils.visualization import (
     save_samples, 
-    plot_loss_curve, 
     plot_noise_schedule,
     TrainingVisualizer,
-    denormalize
 )
 
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 def parse_args():
     """Парсить аргументи командного рядка."""
@@ -116,8 +116,9 @@ def train_step(
     noisy_images, _ = forward_diffusion.add_noise(images, noise, t)
     
     # Передбачаємо шум
-    if scaler is not None:
-        with autocast(device_type='cuda'):
+    if cfg.USE_MIXED_PRECISION and scaler is not None:
+        # Використовується на RTX 30xx+
+        with autocast(device_type='cuda', dtype=cfg.AUTOCAST_DTYPE):
             noise_pred = model(noisy_images, t)
             loss = F.mse_loss(noise_pred, noise)
         
@@ -128,6 +129,7 @@ def train_step(
         scaler.step(optimizer)
         scaler.update()
     else:
+        # Використовується на RTX 20xx і старіших
         noise_pred = model(noisy_images, t)
         loss = F.mse_loss(noise_pred, noise)
         
@@ -236,6 +238,10 @@ def main():
         dropout=cfg.DROPOUT,
     ).to(device)
     
+    # Примітка: на Windows torch.compile іноді може викликати помилки. 
+    # Тому якщо проект запускається на Linux або Mac, можна розкоментувати наступний рядок для прискорення.
+    # model = torch.compile(model)
+    
     print(f"Кількість параметрів: {model.get_num_parameters():,}")
     
     # Створюємо optimizer
@@ -243,6 +249,13 @@ def main():
         model.parameters(),
         lr=cfg.LEARNING_RATE,
         weight_decay=cfg.WEIGHT_DECAY,
+    )
+
+    total_steps = cfg.EPOCHS * len(dataloader)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=total_steps,
+        eta_min=1e-6
     )
     
     # Створюємо scheduler для шуму
@@ -306,6 +319,8 @@ def main():
                 device,
                 scaler,
             )
+            
+            lr_scheduler.step()
             
             # Зберігаємо loss
             epoch_losses.append(loss)
