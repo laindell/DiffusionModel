@@ -292,88 +292,153 @@ def main():
     
     # Продовжуємо навчання якщо вказано
     start_epoch = 0
+    start_batch_idx = 0
+    
     if args.resume:
         try:
-            checkpoint = checkpoint_manager.load_checkpoint(model, optimizer)
-            start_epoch = checkpoint['epoch'] + 1
-            print(f"Продовжуємо з епохи {start_epoch}")
+            # Спробуємо завантажити з урахуванням нових параметрів
+            try:
+                # Перевіряємо чи є interrupted.pt, якщо є - вантажимо його
+                resume_file = 'interrupted.pt' if os.path.exists(os.path.join(cfg.CHECKPOINT_DIR, 'interrupted.pt')) else 'latest.pt'
+                checkpoint = checkpoint_manager.load_checkpoint(model, optimizer, filename=resume_file, lr_scheduler=lr_scheduler)
+                
+                if 'batch_idx' in checkpoint and checkpoint['batch_idx'] > 0:
+                    start_epoch = checkpoint['epoch']
+                    start_batch_idx = checkpoint['batch_idx'] + 1
+                    print(f"Продовжуємо перерване навчання: Епоха {start_epoch}, Батч {start_batch_idx}")
+                else:
+                    start_epoch = checkpoint['epoch'] + 1
+                    start_batch_idx = 0
+                    print(f"Продовжуємо навчання з початку епохи {start_epoch}")
+                    
+                # Видаляємо interrupted.pt якщо успішно відновилися з нього
+                if resume_file == 'interrupted.pt':
+                    os.remove(os.path.join(cfg.CHECKPOINT_DIR, 'interrupted.pt'))
+                    
+            except TypeError:
+                # Fallback для сумісності зі старим методом завантаження
+                checkpoint = checkpoint_manager.load_checkpoint(model, optimizer)
+                start_epoch = checkpoint['epoch'] + 1
+                print(f"Продовжуємо з епохи {start_epoch} (старий формат чекпоінту)")
+                
         except FileNotFoundError:
             print("Не знайдено чекпоінт. Починаємо з нуля.")
     
     # Цикл навчання
     print(f"\nПочинаємо навчання на {cfg.EPOCHS} епох...")
     
-    for epoch in range(start_epoch, cfg.EPOCHS):
-        epoch_losses = []
-        
-        # tqdm для прогресу
-        pbar = tqdm(dataloader, desc=f'Epoch {epoch+1}/{cfg.EPOCHS}')
-        
-        for batch_idx, images in enumerate(pbar):
-            # Крок навчання
-            loss = train_step(
-                model,
-                forward_diffusion,
-                optimizer,
-                images,
-                device,
-                scaler,
-            )
+    try:
+        for epoch in range(start_epoch, cfg.EPOCHS):
+            epoch_losses = []
             
-            lr_scheduler.step()
+            # tqdm для прогресу
+            pbar = tqdm(dataloader, desc=f'Epoch {epoch+1}/{cfg.EPOCHS}')
             
-            # Зберігаємо loss
-            epoch_losses.append(loss)
-            visualizer.add_loss(loss)
+            for batch_idx, images in enumerate(pbar):
+                # Пропускаємо вже пройдені батчі, якщо відновлюємо навчання
+                if epoch == start_epoch and batch_idx < start_batch_idx:
+                    continue
+                    
+                # Крок навчання
+                loss = train_step(
+                    model,
+                    forward_diffusion,
+                    optimizer,
+                    images,
+                    device,
+                    scaler,
+                )
+                
+                lr_scheduler.step()
+                
+                # Зберігаємо loss
+                epoch_losses.append(loss)
+                visualizer.add_loss(loss)
+                
+                # Оновлюємо tqdm
+                pbar.set_postfix({'loss': f'{loss:.4f}'})
             
-            # Оновлюємо tqdm
-            pbar.set_postfix({'loss': f'{loss:.4f}'})
+            # Скидаємо лічильник батчів для наступних епох
+            start_batch_idx = 0
+            
+            # Середній loss за епоху
+            avg_loss = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+            
+            print(f"Epoch {epoch+1}/{cfg.EPOCHS} - Loss: {avg_loss:.4f}")
+            
+            # Зберігаємо чекпоінт
+            if (epoch + 1) % cfg.CHECKPOINT_EVERY == 0:
+                # Перевіряємо чи оновлено метод save_checkpoint (сумісність)
+                try:
+                    checkpoint_manager.save_checkpoint(
+                        model=model,
+                        optimizer=optimizer,
+                        epoch=epoch,
+                        loss=avg_loss,
+                        config=cfg.get_config(),
+                        batch_idx=0,
+                        lr_scheduler=lr_scheduler
+                    )
+                except TypeError:
+                    checkpoint_manager.save_checkpoint(model, optimizer, epoch, avg_loss, cfg.get_config())
+            
+            # Візуалізуємо результати
+            if (epoch + 1) % cfg.VISUALIZE_EVERY == 0:
+                # Генеруємо зразки
+                print("Генеруємо зразки...")
+                samples = generate_samples(
+                    model,
+                    noise_scheduler,
+                    device,
+                    num_samples=16,
+                    image_size=cfg.IMAGE_SIZE,
+                    channels=num_channels,
+                )
+                
+                # Зберігаємо зразки
+                sample_path = os.path.join(cfg.SAMPLES_DIR, f'samples_epoch_{epoch+1:04d}.png')
+                save_samples(samples, sample_path, nrow=4)
+                
+                # Зберігаємо loss plot
+                visualizer.save_loss_plot()
+                
+    except KeyboardInterrupt:
+        print("\n[!] Навчання зупинено зберігаю поточний стан...")
+        current_loss = sum(epoch_losses) / len(epoch_losses) if 'epoch_losses' in locals() and epoch_losses else 0.0
         
-        # Середній loss за епоху
-        avg_loss = sum(epoch_losses) / len(epoch_losses)
-        
-        print(f"Epoch {epoch+1}/{cfg.EPOCHS} - Loss: {avg_loss:.4f}")
-        
-        # Зберігаємо чекпоінт
-        if (epoch + 1) % cfg.CHECKPOINT_EVERY == 0:
+        try:
             checkpoint_manager.save_checkpoint(
-                model,
-                optimizer,
-                epoch,
-                avg_loss,
-                cfg.get_config(),
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                loss=current_loss,
+                config=cfg.get_config(),
+                filename='interrupted.pt',
+                batch_idx=batch_idx,
+                lr_scheduler=lr_scheduler
             )
-        
-        # Візуалізуємо результати
-        if (epoch + 1) % cfg.VISUALIZE_EVERY == 0:
-            # Генеруємо зразки
-            print("Генеруємо зразки...")
-            samples = generate_samples(
-                model,
-                noise_scheduler,
-                device,
-                num_samples=16,
-                image_size=cfg.IMAGE_SIZE,
-                channels=num_channels,
-            )
+            print("Стан збережено в 'interrupted.pt'. Запустіть скрипт з --resume для відновлення.")
+        except TypeError:
+            print("УВАГА: Оновіть utils/checkpoint.py для збереження точного батчу! Зберігаємо базовий стан.")
+            checkpoint_manager.save_checkpoint(model, optimizer, epoch, current_loss, cfg.get_config(), filename='interrupted.pt')
             
-            # Зберігаємо зразки
-            sample_path = os.path.join(cfg.SAMPLES_DIR, f'samples_epoch_{epoch+1:04d}.png')
-            save_samples(samples, sample_path, nrow=4)
-            
-            # Зберігаємо loss plot
-            visualizer.save_loss_plot()
+        sys.exit(0)
     
     # Фінальний чекпоінт
     print("\nЗберігаємо фінальний чекпоінт...")
-    checkpoint_manager.save_checkpoint(
-        model,
-        optimizer,
-        cfg.EPOCHS - 1,
-        avg_loss,
-        cfg.get_config(),
-        filename='final_model.pt',
-    )
+    try:
+        checkpoint_manager.save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            epoch=cfg.EPOCHS - 1,
+            loss=avg_loss,
+            config=cfg.get_config(),
+            filename='final_model.pt',
+            batch_idx=0,
+            lr_scheduler=lr_scheduler
+        )
+    except TypeError:
+        checkpoint_manager.save_checkpoint(model, optimizer, cfg.EPOCHS - 1, avg_loss, cfg.get_config(), filename='final_model.pt')
     
     # Фінальна генерація
     print("Генеруємо фінальні зразки...")

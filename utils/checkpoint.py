@@ -37,21 +37,9 @@ class CheckpointManager:
         loss: float,
         config: Dict[str, Any],
         filename: Optional[str] = None,
+        batch_idx: int = 0,                                 
+        lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None, 
     ) -> str:
-        """
-        Зберігає чекпоінт.
-        
-        Args:
-            model: Модель для збереження
-            optimizer: Оптимізатор
-            epoch: Поточна епоха
-            loss: Поточний loss
-            config: Конфігурація
-            filename: Ім'я файлу (якщо None - генерується автоматично)
-            
-        Returns:
-            Шлях до збереженого файлу
-        """
         if filename is None:
             filename = f'checkpoint_epoch_{epoch:04d}.pt'
         
@@ -59,12 +47,21 @@ class CheckpointManager:
         
         checkpoint = {
             'epoch': epoch,
+            'batch_idx': batch_idx,                         # НОВЕ
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'loss': loss,
             'config': config,
+            # НОВЕ: Зберігаємо стан генераторів випадкових чисел для точного відновлення
+            'rng_state': torch.get_rng_state(),
         }
         
+        if torch.cuda.is_available():
+            checkpoint['cuda_rng_state'] = torch.cuda.get_rng_state()
+
+        if lr_scheduler is not None:
+            checkpoint['scheduler_state_dict'] = lr_scheduler.state_dict() # НОВЕ
+            
         torch.save(checkpoint, filepath)
         
         # Також зберігаємо latest чекпоінт
@@ -81,6 +78,7 @@ class CheckpointManager:
         optimizer: Optional[torch.optim.Optimizer] = None,
         filename: str = 'latest.pt',
         device: str = 'cpu',
+        lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     ) -> Dict[str, Any]:
         """
         Завантажує чекпоінт.
@@ -107,6 +105,14 @@ class CheckpointManager:
         # Завантажуємо стан оптимізатора
         if optimizer is not None and 'optimizer_state_dict' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if lr_scheduler is not None and 'scheduler_state_dict' in checkpoint:
+            lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            
+        if 'rng_state' in checkpoint:
+            torch.set_rng_state(checkpoint['rng_state'])
+        if 'cuda_rng_state' in checkpoint and torch.cuda.is_available():
+            torch.cuda.set_rng_state(checkpoint['cuda_rng_state'])
         
         print(f"Чекпоінт завантажено: {filepath}")
         
